@@ -6,7 +6,6 @@
 # website : http://miniupnp.tuxfamily.org/
 
 # import the python miniupnpc module
-import miniupnpc
 
 try:
     from http.server import BaseHTTPRequestHandler, HTTPServer

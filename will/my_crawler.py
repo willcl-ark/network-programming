@@ -1,11 +1,11 @@
 import hashlib
+import random
 import struct
 import time
-import random
 
 from requests import get
 
-import chainparams
+from will import chainparams
 
 LOCAL_WAN_IP = get('https://api.ipify.org').text
 LOCAL_PORT = 8333
@@ -38,6 +38,7 @@ class Serializable:
     #############
     # Encodings #
     #############
+    """
     _bool = '?'
     char = 's'
     inv_vect = None
@@ -49,7 +50,7 @@ class Serializable:
     uchar = None
     var_int = None
     var_str = None
-
+    """
 
 
 class Message(Serializable):
@@ -182,11 +183,11 @@ class VersionMessage(Message):
         return Message.serialize(self)
 
     avail_services = {hex(1): 'NODE_NETWORK',
-                         hex(2): 'NODE_GETUTXO',
-                         hex(4): 'NODE_BLOOM',
-                         hex(8): 'NODE_WITNESS',
-                         hex(1024): 'NODE_NETWORK_LIMITED'
-                         }
+                      hex(2): 'NODE_GETUTXO',
+                      hex(4): 'NODE_BLOOM',
+                      hex(8): 'NODE_WITNESS',
+                      hex(1024): 'NODE_NETWORK_LIMITED'
+                      }
 
 
 class Verack(Message):
