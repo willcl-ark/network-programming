@@ -9,29 +9,50 @@ def read_addr_payload(stream):
     return addrs
 
 
-def listener(addresses):
-    while True:
-        # get next address from addresses and connect
-        address = addresses.pop()
+class Node:
 
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+
+    @property
+    def address(self):
+        return self.ip, self.port
+
+
+class Connection:
+
+    def __init__(self, node):
+        self.node = node
+        self.sock = None
+        self.stream = None
+        self.start = None
+
+        # Results
+        self.peer_version_payload = None
+        self.nodes_discovered = []
+
+    def open(self):
         # establish connection
-        print(f'Connecting to {address}')
-        sock = handshake(address)
-        stream = sock.makefile('rb')
+        print(f'Connecting to {self.node.ip}')
+        self.sock = handshake(self.node.address)
+        self.stream = self.sock.makefile('rb')
 
         # request peers' peers
-        sock.sendall(serialize_msg(b'getaddr'))
+        self.sock.sendall(serialize_msg(b'getaddr'))
 
         # print every gossip message we receive
         while True:
-            msg = read_msg(stream)
+            # Handle next message
+            msg = read_msg(self.stream)
             command = msg['command']
             payload_len = len(msg['payload'])
             print(f'Received a "{command}" containing {payload_len} bytes')
 
+            # Respond to "ping"
             if command == b'ping':
                 response = serialize_msg(command=b'pong', payload=msg['payload'])
-                sock.sendall(response)
+                self.sock.sendall(response)
                 print("Send pong")
 
             # specially handle peer lists
@@ -39,14 +60,45 @@ def listener(addresses):
                 # TODO: interpret the payload
                 payload = read_addr_payload(BytesIO(msg['payload']))
                 if len(payload['addresses']) > 1:
-                    addresses.extend([
-                        (a['ip'], a['port']) for a in payload['addresses']
-                    ])
+                    self.nodes_discovered = [
+                        Node(a['ip'], a['port']) for a in payload['addresses']
+                    ]
                     break
+        pass
+
+    def close(self):
+        pass
+
+
+class Crawler:
+
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+    def crawl(self):
+        pass
+
+
+def crawler(nodes):
+    while True:
+        # get next address from addresses and connect
+        node = nodes.pop()
+
+        try:
+
+            conn = Connection(node)
+            conn.open()
+        except Exception as e:
+            print(f'Error: str({e})')
+            continue
+
+        # Handle the results if no exceptions
+        nodes.extend(conn.nodes_discovered)
+        print(f'{conn.node.ip} report version {conn.peer_version_payload}')
 
 
 if __name__ == '__main__':
 
-    remote_addr = [('2.82.223.39', 8333)]
-    listener(remote_addr)
+    nodes = [Node('2.82.223.39', 8333)]
+    crawler(nodes)
 
