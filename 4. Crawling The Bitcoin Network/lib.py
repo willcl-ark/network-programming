@@ -151,9 +151,9 @@ def serialize_version_payload(
 
 
 def read_address(stream):
-    r = {}
+    r = dict()
     r["time"] = little_endian_to_int(stream.read(4))
-    r["services"] = stream.read(8)
+    r["services"] = little_endian_to_int(stream.read(8))
     r["ip"] = bytes_to_ip(stream.read(16))
     r["port"] = big_endian_to_int(stream.read(2))
     return r

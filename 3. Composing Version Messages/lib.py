@@ -154,7 +154,7 @@ def read_payload(command, stream):
     return handler(stream)
 
 
-def read_message(stream):
+def read_msg(stream):
     msg = {}
     magic = stream.read(4)
     if magic != NETWORK_MAGIC:
@@ -244,12 +244,12 @@ def handshake(address):
     print("Sent version")
 
     # Step 2: their version message
-    msg = read_message(stream)
+    msg = read_msg(stream)
     print("Version: ")
     pprint(msg)
 
     # Step 3: their version message
-    msg = read_message(stream)
+    msg = read_msg(stream)
     print("Verack: ", msg)
 
     # Step 4: our verack

@@ -9,30 +9,44 @@ def read_addr_payload(stream):
     return addrs
 
 
-def listener(address):
-    # establish connection
-    sock = handshake(address)
-    stream = sock.makefile('rb')
-
-    # request peers' peers
-    sock.sendall(serialize_msg(b'getaddr'))
-
-    # print every gossip message we receive
+def listener(addresses):
     while True:
-        msg = read_msg(stream)
-        command = msg['command']
-        payload_len = len(msg['payload'])
-        print(f'Received a "{command}" containing {payload_len} bytes')
+        # get next address from addresses and connect
+        address = addresses.pop()
 
-        if command == b'ping':
-            response = serialize_msg(command=b'pong', payload=msg['payload'])
-            sock.sendall(response)
+        # establish connection
+        print(f'Connecting to {address}')
+        sock = handshake(address)
+        stream = sock.makefile('rb')
 
-        # specially handle peer lists
-        if command == b'addr':
-            payload = read_addr_payload(BytesIO(msg['payload']))
-            print(msg['payload'])
+        # request peers' peers
+        sock.sendall(serialize_msg(b'getaddr'))
+
+        # print every gossip message we receive
+        while True:
+            msg = read_msg(stream)
+            command = msg['command']
+            payload_len = len(msg['payload'])
+            print(f'Received a "{command}" containing {payload_len} bytes')
+
+            if command == b'ping':
+                response = serialize_msg(command=b'pong', payload=msg['payload'])
+                sock.sendall(response)
+                print("Send pong")
+
+            # specially handle peer lists
+            if command == b'addr':
+                # TODO: interpret the payload
+                payload = read_addr_payload(BytesIO(msg['payload']))
+                if len(payload['addresses']) > 1:
+                    addresses.extend([
+                        (a['ip'], a['port']) for a in payload['addresses']
+                    ])
+                    break
 
 
 if __name__ == '__main__':
-    listener(('2.82.223.39', 8333))
+
+    remote_addr = [('2.82.223.39', 8333)]
+    listener(remote_addr)
+
