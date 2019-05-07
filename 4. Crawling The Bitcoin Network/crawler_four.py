@@ -1,20 +1,9 @@
 import time
 import socket
-import threading
-import queue
-import logging
 
 from io import BytesIO
 
-import socks
-
 from lib import handshake, read_msg, serialize_msg, read_varint, read_address, BitcoinProtocolError, serialize_version_payload, read_version_payload
-
-import db as db
-
-
-logging.basicConfig(level='INFO', filename='crawler.log')
-logger = logging.getLogger(__name__)
 
 
 def read_addr_payload(stream):
@@ -36,19 +25,6 @@ DNS_SEEDS = [
 ]
 
 
-def create_connection(address, timeout=10):
-    if 'onion' in address[0]:
-        return socks.create_connection(
-            address,
-            timeout=timeout,
-            proxy_type=socks.PROXY_TYPE_SOCKS5,
-            proxy_addr="127.0.0.1",
-            proxy_port=9050
-        )
-    else:
-        return socket.create_connection(address, timeout=timeout)
-
-
 def query_dns_seeds():
     nodes = []
     for seed in DNS_SEEDS:
@@ -57,20 +33,15 @@ def query_dns_seeds():
             addresses = [ai[-1][:2] for ai in addr_info]
             nodes.extend([Node(*addr) for addr in addresses])
         except OSError as e:
-            logger.info(f"DNS seed query failed: {str(e)}")
+            print(f"DNS seed query failed: {str(e)}")
     return nodes
 
 
 class Node:
 
-    def __init__(self, ip, port, id=None, next_visit=None, visits_missed=0):
-        if next_visit is None:
-            next_visit = time.time()
+    def __init__(self, ip, port):
         self.ip = ip
         self.port = port
-        self.id = id
-        self.next_visit = next_visit
-        self.visits_missed = visits_missed
 
     @property
     def address(self):
@@ -131,7 +102,7 @@ class Connection:
     def handle_msg(self):
         msg = read_msg(self.stream)
         command = msg['command'].decode()
-        logger.info(f'Received a "{command}"')
+        print(f'Received a "{command}"')
         method_name = f'handle_{command}'
         if hasattr(self, method_name):
             getattr(self, method_name)(msg['payload'])
@@ -145,9 +116,9 @@ class Connection:
         self.start = time.time()
 
         # Open TCP connection
-        logger.info(f'Connecting to {self.node.ip}')
-        self.sock = create_connection(self.node.address, 
-                                      timeout=self.timeout)
+        print(f'Connecting to {self.node.ip}')
+        self.sock = socket.create_connection(self.node.address, 
+                                             timeout=self.timeout)
         self.stream = self.sock.makefile('rb')
 
         # Start version handshake
@@ -163,104 +134,35 @@ class Connection:
             self.sock.close()
 
 
-class Worker(threading.Thread):
+class Crawler:
 
-    def __init__(self, worker_inputs, worker_outputs, timeout):
-        super().__init__()
-        self.worker_inputs = worker_inputs
-        self.worker_outputs = worker_outputs
+    def __init__(self, timeout=10):
         self.timeout = timeout
+        self.nodes = []
 
-    def run(self):
-        while True:
+    def seed(self):
+        self.nodes.extend(query_dns_seeds())
+
+    def crawl(self):
+        # DNS lookups
+        self.seed()
+
+        while :
             # Get next node and connect
-            node = self.worker_inputs.get()
+            node = self.nodes.pop()
 
             try:
                 conn = Connection(node, timeout=self.timeout)
                 conn.open()
             except (OSError, BitcoinProtocolError) as e:
-                logger.info(f'Got error: {str(e)}')
+                print(f'Got error: {str(e)}')
             finally:
                 conn.close()
 
-            # Report results back to the crawler
-            self.worker_outputs.put(conn)
-
-
-class Crawler:
-
-    def __init__(self, num_workers=10, timeout=10):
-        self.timeout = timeout
-        self.worker_inputs = queue.Queue()
-        self.worker_outputs = queue.Queue()
-        self.workers = [
-            Worker(self.worker_inputs, self.worker_outputs, timeout)
-            for _ in range(num_workers)
-        ]
-
-    @property
-    def batch_size(self):
-        return len(self.workers) * 10
-
-    def add_worker_inputs(self):
-        nodes = db.next_nodes(self.batch_size)
-        for node in nodes:
-            self.worker_inputs.put(node)
-
-    def process_worker_outputs(self):
-        # Get connections from output queue
-        conns = []
-        while self.worker_outputs.qsize():
-            conns.append(self.worker_outputs.get())
-
-        # Flush connection outputs to DB
-        db.process_crawler_outputs(conns)
-
-    def seed_db(self):
-        nodes = [node.__dict__ for node in query_dns_seeds()]
-        db.insert_nodes(nodes)
-
-    def print_report(self):
-        print(f'inputs: {self.worker_inputs.qsize()} | '
-              f'outputs: {self.worker_outputs.qsize()} | '
-              f'visited: {db.nodes_visited()} | '
-              f'total: {db.nodes_total()}')
-
-    def main_loop(self):
-        while True:
-            # Print report
-            self.print_report()
-
-            # Fill input queue if running low
-            if self.worker_inputs.qsize() < self.batch_size:
-                self.add_worker_inputs()
-        
-            # Process worker outputs if running high
-            if self.worker_outputs.qsize() > self.batch_size:
-                self.process_worker_outputs()
-
-            # Only check once per second
-            time.sleep(1)
-
-    def crawl(self):
-        # Seed database with initial nodes from DNS seeds
-        self.seed_db()
-
-        # Add to worker inputs
-        self.add_worker_inputs()
-
-        # Start workers
-        for worker in self.workers:
-            worker.start()
-
-        # Manage workers until program ends
-        self.main_loop()
+            # Handle the results
+            self.nodes.extend(conn.nodes_discovered)
+            print(f'{conn.node.ip} reports version {conn.peer_version_payload}')
 
 
 if __name__ == '__main__':
-    # Wipe the database before every run
-    db.drop_and_create_tables()
-
-    # Run the crawler
-    Crawler(num_workers=25, timeout=1).crawl()
+    Crawler(timeout=1).crawl()

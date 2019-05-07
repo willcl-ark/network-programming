@@ -6,11 +6,9 @@ import logging
 
 from io import BytesIO
 
-import socks
-
 from lib import handshake, read_msg, serialize_msg, read_varint, read_address, BitcoinProtocolError, serialize_version_payload, read_version_payload
 
-import db as db
+import mydb as db
 
 
 logging.basicConfig(level='INFO', filename='crawler.log')
@@ -34,19 +32,6 @@ DNS_SEEDS = [
     'seed.bitcoin.sprovoost.nl',
     'dnsseed.emzy.de',
 ]
-
-
-def create_connection(address, timeout=10):
-    if 'onion' in address[0]:
-        return socks.create_connection(
-            address,
-            timeout=timeout,
-            proxy_type=socks.PROXY_TYPE_SOCKS5,
-            proxy_addr="127.0.0.1",
-            proxy_port=9050
-        )
-    else:
-        return socket.create_connection(address, timeout=timeout)
 
 
 def query_dns_seeds():
@@ -146,8 +131,8 @@ class Connection:
 
         # Open TCP connection
         logger.info(f'Connecting to {self.node.ip}')
-        self.sock = create_connection(self.node.address, 
-                                      timeout=self.timeout)
+        self.sock = socket.create_connection(self.node.address, 
+                                             timeout=self.timeout)
         self.stream = self.sock.makefile('rb')
 
         # Start version handshake

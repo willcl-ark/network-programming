@@ -6,11 +6,7 @@ import logging
 
 from io import BytesIO
 
-import socks
-
 from lib import handshake, read_msg, serialize_msg, read_varint, read_address, BitcoinProtocolError, serialize_version_payload, read_version_payload
-
-import db as db
 
 
 logging.basicConfig(level='INFO', filename='crawler.log')
@@ -36,19 +32,6 @@ DNS_SEEDS = [
 ]
 
 
-def create_connection(address, timeout=10):
-    if 'onion' in address[0]:
-        return socks.create_connection(
-            address,
-            timeout=timeout,
-            proxy_type=socks.PROXY_TYPE_SOCKS5,
-            proxy_addr="127.0.0.1",
-            proxy_port=9050
-        )
-    else:
-        return socket.create_connection(address, timeout=timeout)
-
-
 def query_dns_seeds():
     nodes = []
     for seed in DNS_SEEDS:
@@ -63,14 +46,9 @@ def query_dns_seeds():
 
 class Node:
 
-    def __init__(self, ip, port, id=None, next_visit=None, visits_missed=0):
-        if next_visit is None:
-            next_visit = time.time()
+    def __init__(self, ip, port):
         self.ip = ip
         self.port = port
-        self.id = id
-        self.next_visit = next_visit
-        self.visits_missed = visits_missed
 
     @property
     def address(self):
@@ -146,8 +124,8 @@ class Connection:
 
         # Open TCP connection
         logger.info(f'Connecting to {self.node.ip}')
-        self.sock = create_connection(self.node.address, 
-                                      timeout=self.timeout)
+        self.sock = socket.create_connection(self.node.address, 
+                                             timeout=self.timeout)
         self.stream = self.sock.makefile('rb')
 
         # Start version handshake
@@ -199,56 +177,29 @@ class Crawler:
             for _ in range(num_workers)
         ]
 
-    @property
-    def batch_size(self):
-        return len(self.workers) * 10
-
-    def add_worker_inputs(self):
-        nodes = db.next_nodes(self.batch_size)
-        for node in nodes:
+    def seed(self):
+        for node in query_dns_seeds():
             self.worker_inputs.put(node)
-
-    def process_worker_outputs(self):
-        # Get connections from output queue
-        conns = []
-        while self.worker_outputs.qsize():
-            conns.append(self.worker_outputs.get())
-
-        # Flush connection outputs to DB
-        db.process_crawler_outputs(conns)
-
-    def seed_db(self):
-        nodes = [node.__dict__ for node in query_dns_seeds()]
-        db.insert_nodes(nodes)
 
     def print_report(self):
         print(f'inputs: {self.worker_inputs.qsize()} | '
-              f'outputs: {self.worker_outputs.qsize()} | '
-              f'visited: {db.nodes_visited()} | '
-              f'total: {db.nodes_total()}')
+              f'outputs: {self.worker_outputs.qsize()}')
 
     def main_loop(self):
         while True:
-            # Print report
+            # How to get `conn`???
+            conn = self.worker_outputs.get()
+
+            # Handle the results
+            for node in conn.nodes_discovered:
+                self.worker_inputs.put(node)
+
+            logger.info(f'{conn.node.ip} reports version {conn.peer_version_payload}')
             self.print_report()
 
-            # Fill input queue if running low
-            if self.worker_inputs.qsize() < self.batch_size:
-                self.add_worker_inputs()
-        
-            # Process worker outputs if running high
-            if self.worker_outputs.qsize() > self.batch_size:
-                self.process_worker_outputs()
-
-            # Only check once per second
-            time.sleep(1)
-
     def crawl(self):
-        # Seed database with initial nodes from DNS seeds
-        self.seed_db()
-
-        # Add to worker inputs
-        self.add_worker_inputs()
+        # DNS lookups
+        self.seed()
 
         # Start workers
         for worker in self.workers:
@@ -258,9 +209,7 @@ class Crawler:
         self.main_loop()
 
 
-if __name__ == '__main__':
-    # Wipe the database before every run
-    db.drop_and_create_tables()
 
-    # Run the crawler
+
+if __name__ == '__main__':
     Crawler(num_workers=25, timeout=1).crawl()
