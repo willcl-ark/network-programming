@@ -1,3 +1,4 @@
+import logging
 import queue
 import socket
 import threading
@@ -18,6 +19,9 @@ DNS_SEEDS = [
     'dnsseed.emzy.de',
 ]
 
+logging.basicConfig(level='INFO', filename='crawler.log')
+logger = logging.getLogger(__name__)
+
 
 def query_dns_seeds():
     nodes = []
@@ -27,7 +31,7 @@ def query_dns_seeds():
             addresses = [ai[-1][:2] for ai in addr_info]
             nodes.extend([Node(*addr) for addr in addresses])
         except OSError as e:
-            print(f"DNS seed query failed: {str(e)}")
+            logger.info(f"DNS seed query failed: {str(e)}")
     return nodes
 
 
@@ -106,7 +110,7 @@ class Connection:
         # Handle next message
         msg = read_msg(self.stream)
         command = msg['command'].decode()
-        print(f'Received "{command}"')
+        logger.info(f'Received "{command}"')
 
         method_name = f'handle_{command}'
         if hasattr(self, method_name):
@@ -121,7 +125,7 @@ class Connection:
         self.start = time()
 
         # Open TCP connection
-        print(f'Connecting to {self.node.ip}')
+        logger.info(f'Connecting to {self.node.ip}')
         self.sock = socket.create_connection(self.node.address,
                                              self.timeout)
         self.stream = self.sock.makefile("rb")
@@ -157,7 +161,7 @@ class Worker(threading.Thread):
                 conn = Connection(node, timeout=self.timeout)
                 conn.open()
             except (OSError, BitcoinProtocolError) as e:
-                print(f'Error: str({e})')
+                logger.info(f'Error: str({e})')
                 continue
             finally:
                 conn.close()
@@ -170,8 +174,6 @@ class Crawler:
 
     def __init__(self, num_workers=10, timeout=5):
         self.timeout = timeout
-        self.connections = []
-
         self.worker_inputs = queue.Queue()
         self.worker_outputs = queue.Queue()
         self.workers = [
@@ -196,7 +198,7 @@ class Crawler:
             for node in conn.nodes_discovered:
                 self.worker_inputs.put(node)
 
-            print(f'{conn.node.ip} report version {conn.peer_version_payload}')
+            logger.info(f'{conn.node.ip} report version {conn.peer_version_payload}')
             self.print_report()
 
     def crawl(self):
