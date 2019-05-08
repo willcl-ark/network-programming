@@ -1,4 +1,6 @@
+import queue
 import socket
+import threading
 from io import BytesIO
 from time import time
 
@@ -52,7 +54,7 @@ class Node:
 
 class Connection:
 
-    def __init__(self, node, timeout=10):
+    def __init__(self, node, timeout=5):
         self.node = node
         self.sock = None
         self.stream = None
@@ -137,30 +139,22 @@ class Connection:
             self.sock.close()
 
 
-class Crawler:
+class Worker(threading.Thread):
 
-    def __init__(self, timeout=10):
-        self.nodes = []
+    def __init__(self, worker_inputs, worker_outputs, timeout):
+        super().__init__()
+        self.worker_inputs = worker_inputs
+        self.worker_outputs = worker_outputs
         self.timeout = timeout
-        self.connections = []
 
-    def seed(self):
-        self.nodes.extend(query_dns_seeds())
-
-    def print_report(self):
-        print(f'nodes: {len(self.nodes)} | connections: {len(self.connections)}')
-
-    def crawl(self):
-        # DNS lookups
-        self.seed()
-
+    def run(self):
         while True:
             # get next node from addresses and connect
-            node = self.nodes.pop()
+            node = self.worker_inputs.get()
 
             try:
 
-                conn = Connection(node, self.timeout)
+                conn = Connection(node, timeout=self.timeout)
                 conn.open()
             except (OSError, BitcoinProtocolError) as e:
                 print(f'Error: str({e})')
@@ -168,11 +162,53 @@ class Crawler:
             finally:
                 conn.close()
 
-            # Handle the results if no exceptions
-            self.nodes.extend(conn.nodes_discovered)
-            self.connections.append(conn)
+            # report results back to the crawler
+            self.worker_outputs.put(conn)
+
+
+class Crawler:
+
+    def __init__(self, num_workers=10, timeout=5):
+        self.timeout = timeout
+        self.connections = []
+
+        self.worker_inputs = queue.Queue()
+        self.worker_outputs = queue.Queue()
+        self.workers = [
+            Worker(self.worker_inputs, self.worker_outputs, self.timeout)
+            for _ in range(num_workers)
+        ]
+
+    def seed(self):
+        for node in query_dns_seeds():
+            self.worker_inputs.put(node)
+
+    def print_report(self):
+        print(f'inputs {self.worker_inputs.qsize()} | outputs: {self.worker_outputs.qsize()}')
+
+    def main_loop(self):
+
+        while True:
+            # get a connection
+            conn = self.worker_outputs.get()
+
+            # Handle the results
+            for node in conn.nodes_discovered:
+                self.worker_inputs.put(node)
+
             print(f'{conn.node.ip} report version {conn.peer_version_payload}')
             self.print_report()
+
+    def crawl(self):
+        # DNS lookups
+        self.seed()
+
+        # start workers
+        for worker in self.workers:
+            worker.start()
+
+        # manage workers until program ends
+        self.main_loop()
 
 
 if __name__ == '__main__':
