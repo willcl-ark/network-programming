@@ -2,7 +2,31 @@ import socket
 from io import BytesIO
 from time import time
 
-from lib import BitcoinProtocolError, handshake, read_address, read_msg, read_varint, serialize_msg, serialize_version_payload, read_version_payload
+from lib import BitcoinProtocolError, read_address, read_msg, read_varint, read_version_payload, \
+    serialize_msg, serialize_version_payload
+
+DNS_SEEDS = [
+    'dnsseed.bitcoin.dashjr.org',
+    'dnsseed.bluematt.me',
+    'seed.bitcoin.sipa.be',
+    'seed.bitcoinstats.com',
+    'seed.bitcoin.jonasschnelli.ch',
+    'seed.btc.petertodd.org',
+    'seed.bitcoin.sprovoost.nl',
+    'dnsseed.emzy.de',
+]
+
+
+def query_dns_seeds():
+    nodes = []
+    for seed in DNS_SEEDS:
+        try:
+            addr_info = socket.getaddrinfo(seed, 8333, 0, socket.SOCK_STREAM)
+            addresses = [ai[-1][:2] for ai in addr_info]
+            nodes.extend([Node(*addr) for addr in addresses])
+        except OSError as e:
+            print(f"DNS seed query failed: {str(e)}")
+    return nodes
 
 
 def read_addr_payload(stream):
@@ -17,6 +41,9 @@ class Node:
     def __init__(self, ip, port):
         self.ip = ip
         self.port = port
+
+    def __repr__(self):
+        return f'Node({self.ip, self.port})'
 
     @property
     def address(self):
@@ -52,7 +79,6 @@ class Connection:
     def send_getaddr(self):
         self.sock.sendall(serialize_msg(b'getaddr'))
 
-
     def handle_version(self, payload):
         stream = BytesIO(payload)
         self.peer_version_payload = read_version_payload(stream)
@@ -78,15 +104,15 @@ class Connection:
         # Handle next message
         msg = read_msg(self.stream)
         command = msg['command'].decode()
-        print(f'Received a "{command}"')
+        print(f'Received "{command}"')
 
         method_name = f'handle_{command}'
         if hasattr(self, method_name):
             getattr(self, method_name)(msg['payload'])
 
     def remain_alive(self):
-        timed_out = time.time() - self.start > self.timeout
-        return timed_out and not self.nodes_discovered
+        timed_out = (time() - self.start) > self.timeout
+        return not timed_out and not self.nodes_discovered
 
     def open(self):
         # Set start time
@@ -113,10 +139,20 @@ class Connection:
 
 class Crawler:
 
-    def __init__(self, nodes):
-        self.nodes = nodes
+    def __init__(self, timeout=10):
+        self.nodes = []
+        self.timeout = timeout
+        self.connections = []
+
+    def seed(self):
+        self.nodes.extend(query_dns_seeds())
+
+    def print_report(self):
+        print(f'nodes: {len(self.nodes)} | connections: {len(self.connections)}')
 
     def crawl(self):
+        # DNS lookups
+        self.seed()
 
         while True:
             # get next node from addresses and connect
@@ -124,7 +160,7 @@ class Crawler:
 
             try:
 
-                conn = Connection(node)
+                conn = Connection(node, self.timeout)
                 conn.open()
             except (OSError, BitcoinProtocolError) as e:
                 print(f'Error: str({e})')
@@ -134,11 +170,10 @@ class Crawler:
 
             # Handle the results if no exceptions
             self.nodes.extend(conn.nodes_discovered)
+            self.connections.append(conn)
             print(f'{conn.node.ip} report version {conn.peer_version_payload}')
+            self.print_report()
 
 
 if __name__ == '__main__':
-    nodes = [Node('2.82.223.39', 8333),
-             Node('172.105.219.38', 8333),
-             Node('34.222.156.12', 8333)]
-    Crawler(nodes).crawl()
+    Crawler(timeout=5).crawl()
